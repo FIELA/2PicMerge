@@ -45,10 +45,12 @@ def merge_images(img1_path, img2_path, output_path, direction='horizontal'):
 # 大图预览窗口
 # --------------------------
 class ImagePreviewDialog(QDialog):
-    def __init__(self, img_path=None, parent=None, pixmap=None):
+    def __init__(self, img_path=None, parent=None, pixmap=None, is_selected=False):
         super().__init__(parent)
         self.setWindowTitle("图片预览")
         self.img_path = img_path
+        self.is_selected = is_selected
+        self.deselect_mode = False
 
         vbox = QVBoxLayout(self)
 
@@ -69,18 +71,48 @@ class ImagePreviewDialog(QDialog):
 
         # 底部按钮
         hbox = QHBoxLayout()
-        # 如果是直接传入 pixmap (批量预览模式)，显示“关闭”；否则显示“选择这张”
-        btn_ok = QPushButton("确定" if pixmap else "选择这张")
-        btn_cancel = QPushButton("关闭" if pixmap else "取消")
         
-        btn_ok.clicked.connect(self.accept)
-        btn_cancel.clicked.connect(self.reject)
+        if pixmap:
+            # 批量预览模式
+            btn_ok = QPushButton("确定")
+            btn_cancel = QPushButton("关闭")
+            btn_ok.clicked.connect(self.accept)
+            btn_cancel.clicked.connect(self.reject)
+            hbox.addWidget(btn_ok)
+            hbox.addWidget(btn_cancel)
+        else:
+            # 手动预览模式
+            if self.is_selected:
+                # 已选中的图片：显示"取消选择"和"选择这张"
+                btn_deselect = QPushButton("取消选择")
+                btn_select = QPushButton("选择这张")
+                
+                btn_deselect.clicked.connect(self.deselect_and_close)
+                btn_select.clicked.connect(self.accept)
+                
+                btn_select.setDefault(True)  # 默认选中"选择这张"
+                
+                hbox.addWidget(btn_deselect)
+                hbox.addWidget(btn_select)
+            else:
+                # 未选中的图片
+                btn_ok = QPushButton("选择这张")
+                btn_cancel = QPushButton("取消")
+                
+                btn_ok.clicked.connect(self.accept)
+                btn_cancel.clicked.connect(self.reject)
+                
+                hbox.addWidget(btn_ok)
+                hbox.addWidget(btn_cancel)
         
-        hbox.addWidget(btn_ok)
-        hbox.addWidget(btn_cancel)
         vbox.addLayout(hbox)
 
         self.setFixedSize(650, 720)
+    
+    def deselect_and_close(self):
+        """取消选择并关闭对话框"""
+        self.deselect_mode = True
+        self.reject()
 
 
 # --------------------------
@@ -282,6 +314,7 @@ class ImageSelector(QWidget):
         self.image_paths = []
         self.selected = []
         self.labels = []
+        self.exif_cache = {}  # 缓存EXIF时间数据
 
         self.initUI()
 
@@ -293,6 +326,11 @@ class ImageSelector(QWidget):
 
         # 顶部控制区
         top_layout = QHBoxLayout()
+        
+        # 选择计数器
+        self.lbl_selection_count = QLabel("已选择: 0/2")
+        self.lbl_selection_count.setStyleSheet("font-weight: bold; color: #6750A4;")
+        top_layout.addWidget(self.lbl_selection_count)
         
         btn_choose = QPushButton("选择图片文件夹")
         btn_choose.clicked.connect(self.choose_folder)
@@ -362,6 +400,10 @@ class ImageSelector(QWidget):
     # 获取图片拍摄时间（EXIF → mtime）
     # --------------------------
     def get_capture_time(self, filename):
+        # 检查缓存
+        if filename in self.exif_cache:
+            return self.exif_cache[filename]
+        
         full_path = os.path.join(self.folder, filename)
 
         try:
@@ -378,20 +420,26 @@ class ImageSelector(QWidget):
                     if key in exif_data:
                         dt_str = exif_data[key]
                         try:
-                            return datetime.datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+                            result = datetime.datetime.strptime(dt_str, "%Y:%m:%d %H:%M:%S")
+                            self.exif_cache[filename] = result
+                            return result
                         except:
                             pass
         except:
             pass
 
         # 无 EXIF → 文件修改时间
-        return datetime.datetime.fromtimestamp(os.path.getmtime(full_path))
+        result = datetime.datetime.fromtimestamp(os.path.getmtime(full_path))
+        self.exif_cache[filename] = result
+        return result
 
     # --------------------------
     # 加载 + 排序 + 显示图片缩略图
     # --------------------------
     def load_images(self):
         self.selected = []
+        self.update_selection_count()
+        self.exif_cache.clear()  # 清空EXIF缓存
 
         # 清空 UI 网格
         for i in reversed(range(self.grid.count())):
@@ -448,9 +496,25 @@ class ImageSelector(QWidget):
     # 弹出大图预览
     # --------------------------
     def open_preview(self, path, label):
-        preview = ImagePreviewDialog(path, self)
-        if preview.exec() == QDialog.DialogCode.Accepted:
-            self.select_image(path, label)
+        # 检查该图片是否已选中
+        is_selected = any(p == path for p, _ in self.selected)
+        
+        if is_selected:
+            # 已选中的图片：可以取消选择或重新确认
+            preview = ImagePreviewDialog(path, self, is_selected=True)
+            result = preview.exec()
+            
+            if preview.deselect_mode:
+                # 取消选择
+                self.deselect_image(path, label)
+            elif result == QDialog.DialogCode.Accepted:
+                # 重新确认选择（保持选中状态）
+                pass
+        else:
+            # 未选中的图片：正常预览和选择
+            preview = ImagePreviewDialog(path, self, is_selected=False)
+            if preview.exec() == QDialog.DialogCode.Accepted:
+                self.select_image(path, label)
 
     # --------------------------
     # 确认选择一张
@@ -461,14 +525,27 @@ class ImageSelector(QWidget):
 
         self.selected.append((path, label))
         label.setStyleSheet("border: 3px solid red;")
+        self.update_selection_count()
 
         if len(self.selected) == 2:
             self.merge_selected()
+    
+    def deselect_image(self, path, label):
+        """取消选择某张图片"""
+        self.selected = [(p, l) for p, l in self.selected if p != path]
+        label.setStyleSheet("border: 2px solid transparent;")
+        self.update_selection_count()
+    
+    def update_selection_count(self):
+        """更新选择计数器"""
+        count = len(self.selected)
+        self.lbl_selection_count.setText(f"已选择: {count}/2")
 
     def clear_selection(self):
         for _, label in self.selected:
             label.setStyleSheet("border: 2px solid transparent;")
         self.selected = []
+        self.update_selection_count()
 
     # --------------------------
     # 拼接 + 移动源图 + 刷新界面
