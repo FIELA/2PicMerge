@@ -61,13 +61,54 @@ class ImagePreviewDialog(QDialog):
         else:
             pix = QPixmap()
 
-        pix = pix.scaled(
-            600, 600, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        # 图片显示区域 (Scroll Area)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.label = QLabel()
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scroll_area.setWidget(self.label)
+        
+        vbox.addWidget(self.scroll_area)
 
-        label = QLabel()
-        label.setPixmap(pix)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        vbox.addWidget(label)
+        # 缩放控制按钮
+        hbox_zoom = QHBoxLayout()
+        btn_zoom_in = QPushButton("放大 (+)")
+        btn_zoom_out = QPushButton("缩小 (-)")
+        btn_reset = QPushButton("复原 (1:1)")
+        
+        btn_zoom_in.clicked.connect(self.zoom_in)
+        btn_zoom_out.clicked.connect(self.zoom_out)
+        btn_reset.clicked.connect(self.zoom_reset)
+        
+        hbox_zoom.addWidget(btn_zoom_in)
+        hbox_zoom.addWidget(btn_zoom_out)
+        hbox_zoom.addWidget(btn_reset)
+        vbox.addLayout(hbox_zoom)
+
+        # 初始化显示
+        self.scale_factor = 1.0
+        self.base_pixmap = pix if pix else QPixmap()
+        if img_path and not pix:
+             self.base_pixmap = QPixmap(img_path)
+        
+        # 计算初始缩放比例以适应窗口
+        if not self.base_pixmap.isNull():
+            # 目标显示区域大小 (预留一些边距)
+            target_w = 600
+            target_h = 550
+            
+            w = self.base_pixmap.width()
+            h = self.base_pixmap.height()
+            
+            # 计算适合的缩放比例
+            scale_w = target_w / w
+            scale_h = target_h / h
+            self.initial_scale = min(scale_w, scale_h, 1.0) # 不超过1.0
+            self.scale_factor = self.initial_scale
+             
+        self.update_image()
 
         # 底部按钮
         hbox = QHBoxLayout()
@@ -109,6 +150,37 @@ class ImagePreviewDialog(QDialog):
 
         self.setFixedSize(650, 720)
     
+    def update_image(self):
+        if self.base_pixmap.isNull():
+            return
+            
+        # 根据缩放比例调整图片大小
+        scaled_w = int(self.base_pixmap.width() * self.scale_factor)
+        scaled_h = int(self.base_pixmap.height() * self.scale_factor)
+        
+        # 限制最小/最大尺寸
+        if scaled_w < 50 or scaled_h < 50: # 允许更小的尺寸以便缩小查看
+            return
+            
+        scaled_pix = self.base_pixmap.scaled(
+            scaled_w, scaled_h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self.label.setPixmap(scaled_pix)
+
+    def zoom_in(self):
+        self.scale_factor *= 1.2
+        self.update_image()
+
+    def zoom_out(self):
+        self.scale_factor /= 1.2
+        self.update_image()
+
+    def zoom_reset(self):
+        self.scale_factor = self.initial_scale # 复原到适应窗口的大小
+        self.update_image()
+
     def deselect_and_close(self):
         """取消选择并关闭对话框"""
         self.deselect_mode = True
@@ -156,8 +228,26 @@ class BatchDialog(QDialog):
 
         # 3. 预览区域
         group_preview = QGroupBox("3. 预览 (前3组)")
-        self.layout_preview = QGridLayout()
-        group_preview.setLayout(self.layout_preview)
+        # Use a vertical layout for the group box to hold the scroll area
+        preview_container_layout = QVBoxLayout()
+        
+        # Create Scroll Area
+        self.scroll_preview = QScrollArea()
+        self.scroll_preview.setWidgetResizable(True)
+        self.scroll_preview.setFrameShape(QScrollArea.Shape.NoFrame) # Optional: remove border
+        
+        # Create a widget to hold the grid layout
+        self.preview_widget = QWidget()
+        self.layout_preview = QGridLayout(self.preview_widget)
+        self.preview_widget.setLayout(self.layout_preview)
+        
+        # Set the widget to the scroll area
+        self.scroll_preview.setWidget(self.preview_widget)
+        
+        # Add scroll area to group box layout
+        preview_container_layout.addWidget(self.scroll_preview)
+        group_preview.setLayout(preview_container_layout)
+        
         layout.addWidget(group_preview)
 
         # 按钮区
