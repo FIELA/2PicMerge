@@ -1,8 +1,8 @@
 # 2PicMerge - 双图拼接工具
 
-一个基于 PyQt6 的图片拼接工具，支持手动和批量拼接图片。
+<img src="app_icon.png" alt="App Icon" width="120"/>
 
-![App Icon](app_icon.png)
+一个基于 PyQt6 的图片拼接工具，支持手动和批量拼接图片。
 
 ## 功能特点
 
@@ -90,4 +90,4 @@ python main.py
 
 ## 许可证
 
-请查看 LICENSE 文件了解详情。
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
